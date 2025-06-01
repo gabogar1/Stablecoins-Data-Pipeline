@@ -1,10 +1,13 @@
 # Stablecoin Market Cap Data Pipeline
 
-A robust Python pipeline that fetches historical market capitalization data for major stablecoins from the CoinGecko API and stores it in a PostgreSQL database hosted on Supabase.
+A robust Python pipeline that fetches **daily** historical market capitalization data for major stablecoins from the CoinGecko API and stores it in a PostgreSQL database hosted on Supabase.
+
+**📅 Data Coverage**: Last 365 days (CoinGecko free tier limitation)
 
 ## 🚀 Features
 
-- **Comprehensive Data Collection**: Fetches all available historical data for 6 major stablecoins
+- **Daily Data Collection**: Fetches the last 365 days of daily historical data for 6 major stablecoins
+- **Free Tier Optimized**: Works within CoinGecko's free tier limitations (365 days, 30 calls/minute)
 - **Rate Limit Compliance**: Respects CoinGecko's free tier limits (30 calls/minute)
 - **Data Quality Validation**: Implements price range validation and anomaly detection
 - **Robust Error Handling**: Continues processing other coins if one fails
@@ -70,8 +73,8 @@ pip install -r requirements.txt
 
 ### 4. CoinGecko API Key (Optional)
 
-- **Free Tier**: No API key required (30 calls/minute)
-- **Paid Tier**: Add your API key to `.env` for higher rate limits
+- **Free Tier**: No API key required (30 calls/minute, 365 days of data)
+- **Paid Tier**: Add your API key to `.env` for higher rate limits and historical data access
 
 ## 🔄 Usage
 
@@ -84,33 +87,33 @@ python stablecoin_data_pipeline.py
 ### Expected Output
 
 ```
-2024-01-XX XX:XX:XX - INFO - 🚀 Starting Stablecoin Data Pipeline
+2024-01-XX XX:XX:XX - INFO - 🚀 Starting Stablecoin Data Pipeline (Daily Data Collection - Last 365 Days)
 2024-01-XX XX:XX:XX - INFO - ✅ Successfully connected to PostgreSQL database
-2024-01-XX XX:XX:XX - INFO - ✅ Database table and indexes created/verified
+2024-01-XX XX:XX:XX - INFO - ✅ Database table and indexes created/verified (daily data only)
 
-📍 Processing tether...
-2024-01-XX XX:XX:XX - INFO - 📊 Fetching market data for tether (max days)
-2024-01-XX XX:XX:XX - INFO - ✅ Successfully fetched 2,847 data points for tether
-2024-01-XX XX:XX:XX - INFO - 📈 Processing 2,847 records with daily granularity
-2024-01-XX XX:XX:XX - INFO - ✅ Processed 2,847 valid records for tether
-2024-01-XX XX:XX:XX - INFO - ✅ Successfully upserted 2,847 records
-2024-01-XX XX:XX:XX - INFO - ✅ Completed processing tether
+📍 Processing daily data for tether (last 365 days)...
+2024-01-XX XX:XX:XX - INFO - 📊 Fetching daily market data for tether (last 365 days)
+2024-01-XX XX:XX:XX - INFO - ✅ Successfully fetched 365 daily data points for tether
+2024-01-XX XX:XX:XX - INFO - 📈 Processing 365 daily records for tether
+2024-01-XX XX:XX:XX - INFO - ✅ Processed 365 valid daily records for tether
+2024-01-XX XX:XX:XX - INFO - ✅ Successfully upserted 365 records
+2024-01-XX XX:XX:XX - INFO - ✅ Completed daily data processing for tether
 
 ... (continues for all stablecoins)
 
-📊 PIPELINE SUMMARY
+📊 DAILY DATA PIPELINE SUMMARY (LAST 365 DAYS)
 ✅ Successful: 6 coins
 ❌ Failed: 0 coins
-🎉 Successfully processed: tether, usd-coin, dai, binance-usd, frax, true-usd
+🎉 Successfully processed daily data: tether, usd-coin, dai, binance-usd, frax, true-usd
 
-📈 DATA STATISTICS
-tether: 2,847 records (2015-02-25 to 2024-01-XX)
-usd-coin: 1,952 records (2018-10-08 to 2024-01-XX)
-dai: 2,190 records (2017-12-27 to 2024-01-XX)
-binance-usd: 1,621 records (2019-09-20 to 2024-01-XX)
-frax: 1,156 records (2020-12-21 to 2024-01-XX)
-true-usd: 2,301 records (2018-01-31 to 2024-01-XX)
-📊 Total records in database: 12,067
+📈 DAILY DATA STATISTICS (LAST 365 DAYS)
+tether: 365 daily records (2024-01-XX to 2025-01-XX)
+usd-coin: 365 daily records (2024-01-XX to 2025-01-XX)
+dai: 365 daily records (2024-01-XX to 2025-01-XX)
+binance-usd: 365 daily records (2024-01-XX to 2025-01-XX)
+frax: 365 daily records (2024-01-XX to 2025-01-XX)
+true-usd: 365 daily records (2024-01-XX to 2025-01-XX)
+📊 Total daily records in database: 2,190
 ```
 
 ## 🗄️ Database Schema
@@ -123,11 +126,11 @@ CREATE TABLE stablecoin_market_caps (
     coin_id VARCHAR(50) NOT NULL,           -- CoinGecko coin ID
     coin_name VARCHAR(100) NOT NULL,        -- Human readable name
     coin_symbol VARCHAR(10) NOT NULL,       -- Token symbol (USDT, USDC, etc.)
-    timestamp_utc TIMESTAMPTZ NOT NULL,     -- UTC timestamp
+    timestamp_utc TIMESTAMPTZ NOT NULL,     -- UTC timestamp (daily)
     market_cap_usd NUMERIC(20,2),          -- Market cap in USD
     price_usd NUMERIC(12,6),               -- Price in USD
     volume_24h_usd NUMERIC(20,2),          -- 24h volume in USD
-    data_granularity VARCHAR(20),          -- '5min', 'hourly', 'daily'
+    data_granularity VARCHAR(20) DEFAULT 'daily', -- Always 'daily'
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
 
@@ -166,14 +169,17 @@ CREATE TABLE stablecoin_market_caps (
 ### Rate Limiting
 
 - **Free Tier**: 2.1 second delay between requests (30 calls/minute)
-- **Estimated Runtime**: ~15-20 minutes for full backfill of all 6 coins
+- **Data Limitation**: Free tier limited to last 365 days of historical data
+- **Estimated Runtime**: ~2-3 minutes for 365-day data backfill of all 6 coins
 - Automatic retry with exponential backoff for rate limits
 
 ### Database Optimization
 
 - Batch inserts with 1,000 record pages
 - Transaction management with rollback on errors
-- Efficient indexing for query performance
+- Efficient indexing for daily time-series query performance
+- Daily data granularity reduces storage requirements and improves query speed
+- Smaller dataset (365 days vs years) means faster processing and queries
 
 ## 🔧 Troubleshooting
 

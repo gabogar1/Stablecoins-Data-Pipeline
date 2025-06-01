@@ -93,10 +93,10 @@ def test_coingecko_api():
         if response.status_code == 200:
             print("✅ CoinGecko API is accessible")
             
-            # Test data endpoint with a simple call
+            # Test data endpoint with a simple call (last 7 days)
             test_response = requests.get(
                 "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart",
-                params={'vs_currency': 'usd', 'days': '1'},
+                params={'vs_currency': 'usd', 'days': '7', 'interval': 'daily'},
                 timeout=10
             )
             
@@ -104,6 +104,7 @@ def test_coingecko_api():
                 data = test_response.json()
                 if 'market_caps' in data:
                     print(f"✅ Market data endpoint working (got {len(data['market_caps'])} data points)")
+                    print("📅 Free tier provides up to 365 days of historical data")
                     return True
                 else:
                     print("⚠️ Market data endpoint returned unexpected format")

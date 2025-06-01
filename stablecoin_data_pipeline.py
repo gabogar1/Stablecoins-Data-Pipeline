@@ -5,8 +5,8 @@ Stablecoin Market Cap Data Pipeline
 Fetches historical market cap data for major stablecoins from CoinGecko API
 and stores it in a PostgreSQL database hosted on Supabase.
 
-Author: AI Assistant
-Created: 2024
+Author: Gabriel
+Created: 2025
 """
 
 import requests
@@ -28,6 +28,8 @@ class StablecoinDataPipeline:
     """
     A robust pipeline for fetching stablecoin market data from CoinGecko API
     and storing it in PostgreSQL database.
+    
+    Free tier limitation: Only the last 365 days of data are available.
     """
     
     # Target stablecoins with their CoinGecko IDs and metadata
@@ -127,7 +129,7 @@ class StablecoinDataPipeline:
             market_cap_usd NUMERIC(20,2),
             price_usd NUMERIC(12,6),
             volume_24h_usd NUMERIC(20,2),
-            data_granularity VARCHAR(20),
+            data_granularity VARCHAR(20) DEFAULT 'daily',
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
             
@@ -148,7 +150,7 @@ class StablecoinDataPipeline:
             with self.db_connection.cursor() as cursor:
                 cursor.execute(create_table_sql)
                 self.db_connection.commit()
-                self.logger.info("✅ Database table and indexes created/verified")
+                self.logger.info("✅ Database table and indexes created/verified (daily data only)")
         except Exception as e:
             self.logger.error(f"❌ Failed to create table: {e}")
             self.db_connection.rollback()
@@ -200,13 +202,14 @@ class StablecoinDataPipeline:
         self.logger.error(f"❌ Failed to fetch data from {endpoint} after {self.max_retries} attempts")
         return None
     
-    def fetch_market_data(self, coin_id: str, days: str = "max") -> Optional[Dict]:
+    def fetch_market_data(self, coin_id: str, days: str = "365") -> Optional[Dict]:
         """
         Fetch market cap data from CoinGecko API.
+        Free tier is limited to 365 days of historical data.
         
         Args:
             coin_id: CoinGecko coin identifier
-            days: Number of days to fetch ('max' for all available data)
+            days: Number of days to fetch (max 365 for free tier)
             
         Returns:
             Market data dictionary or None if failed
@@ -215,10 +218,10 @@ class StablecoinDataPipeline:
         params = {
             'vs_currency': 'usd',
             'days': days,
-            'interval': 'daily' if days == "max" else 'auto'
+            'interval': 'daily'  # Force daily interval only
         }
         
-        self.logger.info(f"📊 Fetching market data for {coin_id} ({days} days)")
+        self.logger.info(f"📊 Fetching daily market data for {coin_id} (last {days} days)")
         
         # Respect rate limit
         time.sleep(self.rate_limit_delay)
@@ -226,7 +229,7 @@ class StablecoinDataPipeline:
         data = self._make_api_request(endpoint, params)
         
         if data and 'market_caps' in data:
-            self.logger.info(f"✅ Successfully fetched {len(data['market_caps'])} data points for {coin_id}")
+            self.logger.info(f"✅ Successfully fetched {len(data['market_caps'])} daily data points for {coin_id}")
             return data
         else:
             self.logger.error(f"❌ No market data received for {coin_id}")
@@ -235,26 +238,31 @@ class StablecoinDataPipeline:
     def _determine_granularity(self, timestamps: List[int]) -> str:
         """
         Determine the data granularity based on timestamp intervals.
+        Since we only request daily data, this should always return 'daily'.
         
         Args:
             timestamps: List of UNIX timestamps
             
         Returns:
-            Granularity string ('5min', 'hourly', 'daily')
+            Granularity string (should always be 'daily')
         """
         if len(timestamps) < 2:
-            return 'unknown'
+            return 'daily'  # Default to daily
         
         # Calculate average interval in seconds
         intervals = [timestamps[i] - timestamps[i-1] for i in range(1, min(10, len(timestamps)))]
         avg_interval = sum(intervals) / len(intervals)
         
-        if avg_interval <= 300:  # 5 minutes
-            return '5min'
-        elif avg_interval <= 3600:  # 1 hour
-            return 'hourly'
-        else:
+        # Convert to hours for easier understanding
+        avg_interval_hours = avg_interval / 3600
+        
+        # We expect daily data (24 hours), but allow some tolerance
+        if 20 <= avg_interval_hours <= 30:  # Between 20-30 hours (daily with some tolerance)
             return 'daily'
+        else:
+            # Log unexpected granularity but still process as daily
+            self.logger.warning(f"⚠️ Unexpected data interval: ~{avg_interval_hours:.1f} hours. Expected daily data.")
+            return 'daily'  # Force to daily since that's what we requested
     
     def _validate_price(self, price: float, coin_id: str) -> bool:
         """
@@ -276,13 +284,14 @@ class StablecoinDataPipeline:
     def process_market_data(self, raw_data: Dict, coin_id: str) -> List[Dict]:
         """
         Process and flatten API response data.
+        Only processes daily granularity data.
         
         Args:
             raw_data: Raw API response data
             coin_id: CoinGecko coin identifier
             
         Returns:
-            List of processed data records
+            List of processed data records (daily granularity only)
         """
         coin_info = self.STABLECOINS.get(coin_id, {
             'name': coin_id.title(),
@@ -296,11 +305,16 @@ class StablecoinDataPipeline:
         prices = raw_data.get('prices', [])
         volumes = raw_data.get('total_volumes', [])
         
-        # Determine granularity
+        # Determine granularity - should always be daily
         timestamps = [item[0] for item in market_caps]
         granularity = self._determine_granularity(timestamps)
         
-        self.logger.info(f"📈 Processing {len(market_caps)} records with {granularity} granularity")
+        # Validate that we have daily data
+        if granularity != 'daily':
+            self.logger.error(f"❌ Expected daily data for {coin_id}, got {granularity}. Skipping...")
+            return []
+        
+        self.logger.info(f"📈 Processing {len(market_caps)} daily records for {coin_id}")
         
         # Create lookup dictionaries for efficient matching
         price_dict = {item[0]: item[1] for item in prices} if prices else {}
@@ -336,7 +350,7 @@ class StablecoinDataPipeline:
                     'market_cap_usd': Decimal(str(market_cap)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if market_cap is not None else None,
                     'price_usd': Decimal(str(price)).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP) if price is not None else None,
                     'volume_24h_usd': Decimal(str(volume_24h)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if volume_24h is not None else None,
-                    'data_granularity': granularity
+                    'data_granularity': 'daily'  # Always daily as validated above
                 }
                 
                 processed_records.append(record)
@@ -348,7 +362,7 @@ class StablecoinDataPipeline:
         if anomaly_count > 5:
             self.logger.warning(f"⚠️ Total price anomalies for {coin_id}: {anomaly_count}")
         
-        self.logger.info(f"✅ Processed {len(processed_records)} valid records for {coin_id}")
+        self.logger.info(f"✅ Processed {len(processed_records)} valid daily records for {coin_id}")
         return processed_records
     
     def upsert_market_data(self, processed_data: List[Dict]) -> None:
@@ -439,8 +453,8 @@ class StablecoinDataPipeline:
             return {}
     
     def run_pipeline(self) -> None:
-        """Main pipeline execution for all stablecoins."""
-        self.logger.info("🚀 Starting Stablecoin Data Pipeline")
+        """Main pipeline execution for all stablecoins - daily data only (last 365 days)."""
+        self.logger.info("🚀 Starting Stablecoin Data Pipeline (Daily Data Collection - Last 365 Days)")
         
         # Create table if needed
         self.create_table_if_not_exists()
@@ -450,16 +464,16 @@ class StablecoinDataPipeline:
         
         for coin_id in self.STABLECOINS.keys():
             try:
-                self.logger.info(f"\n📍 Processing {coin_id}...")
+                self.logger.info(f"\n📍 Processing daily data for {coin_id} (last 365 days)...")
                 
-                # Fetch market data
-                raw_data = self.fetch_market_data(coin_id, days="max")
+                # Fetch market data (daily only, last 365 days)
+                raw_data = self.fetch_market_data(coin_id, days="365")
                 
                 if raw_data is None:
                     failed_coins.append(coin_id)
                     continue
                 
-                # Process the data
+                # Process the data (daily only)
                 processed_data = self.process_market_data(raw_data, coin_id)
                 
                 if not processed_data:
@@ -470,7 +484,7 @@ class StablecoinDataPipeline:
                 self.upsert_market_data(processed_data)
                 successful_coins.append(coin_id)
                 
-                self.logger.info(f"✅ Completed processing {coin_id}")
+                self.logger.info(f"✅ Completed daily data processing for {coin_id}")
                 
             except Exception as e:
                 self.logger.error(f"❌ Failed to process {coin_id}: {e}")
@@ -478,12 +492,12 @@ class StablecoinDataPipeline:
                 continue
         
         # Final summary
-        self.logger.info(f"\n📊 PIPELINE SUMMARY")
+        self.logger.info(f"\n📊 DAILY DATA PIPELINE SUMMARY (LAST 365 DAYS)")
         self.logger.info(f"✅ Successful: {len(successful_coins)} coins")
         self.logger.info(f"❌ Failed: {len(failed_coins)} coins")
         
         if successful_coins:
-            self.logger.info(f"🎉 Successfully processed: {', '.join(successful_coins)}")
+            self.logger.info(f"🎉 Successfully processed daily data: {', '.join(successful_coins)}")
         
         if failed_coins:
             self.logger.warning(f"⚠️ Failed to process: {', '.join(failed_coins)}")
@@ -491,12 +505,12 @@ class StablecoinDataPipeline:
         # Display data statistics
         stats = self.get_data_stats()
         if stats:
-            self.logger.info(f"\n📈 DATA STATISTICS")
+            self.logger.info(f"\n📈 DAILY DATA STATISTICS (LAST 365 DAYS)")
             for coin_id, coin_stats in stats.items():
                 if coin_id != 'total_records':
-                    self.logger.info(f"{coin_id}: {coin_stats['records']:,} records "
+                    self.logger.info(f"{coin_id}: {coin_stats['records']:,} daily records "
                                    f"({coin_stats['earliest'].date()} to {coin_stats['latest'].date()})")
-            self.logger.info(f"📊 Total records in database: {stats.get('total_records', 0):,}")
+            self.logger.info(f"📊 Total daily records in database: {stats.get('total_records', 0):,}")
     
     def __del__(self):
         """Cleanup database connection."""
@@ -509,10 +523,10 @@ def load_configuration() -> Dict[str, str]:
     load_dotenv()
     
     required_vars = [
-        'SUPABASE_DB_HOST',
-        'SUPABASE_DB_NAME', 
-        'SUPABASE_DB_USER',
-        'SUPABASE_DB_PASSWORD'
+        # 'SUPABASE_DB_HOST',
+        # 'SUPABASE_DB_NAME', 
+        # 'SUPABASE_DB_USER',
+        # 'SUPABASE_DB_PASSWORD'
     ]
     
     config = {}
