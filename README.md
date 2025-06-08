@@ -62,7 +62,7 @@ pip install -r requirements.txt
    SUPABASE_DB_NAME=postgres
    SUPABASE_DB_USER=postgres
    SUPABASE_DB_PASSWORD=your_password
-   SUPABASE_DB_PORT=5432
+   SUPABASE_DB_PORT=your_port
    ```
 
    **Where to find your Supabase credentials**:
