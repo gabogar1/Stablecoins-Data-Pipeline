@@ -1,26 +1,19 @@
-#!/usr/bin/env python3
 """
 Stablecoin Market Cap Data Pipeline
 
 Fetches historical market cap data for major stablecoins from CoinGecko API
 and stores it in a PostgreSQL database hosted on Supabase.
-
-Author: Gabriel
-Created: 2025
 """
 
 import requests
 import time
 import psycopg2
 from psycopg2.extras import execute_batch, RealDictCursor
-import pandas as pd
-import numpy as np
 from datetime import datetime, timezone
 import os
 import logging
-from typing import List, Dict, Optional, Tuple, Union
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
-import json
 from decimal import Decimal, ROUND_HALF_UP
 
 
@@ -523,10 +516,6 @@ def load_configuration() -> Dict[str, str]:
     load_dotenv()
     
     required_vars = [
-        # 'SUPABASE_DB_HOST',
-        # 'SUPABASE_DB_NAME', 
-        # 'SUPABASE_DB_USER',
-        # 'SUPABASE_DB_PASSWORD'
     ]
     
     config = {}

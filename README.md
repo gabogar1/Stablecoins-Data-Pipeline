@@ -1,10 +1,10 @@
-# Stablecoin Market Cap Data Pipeline
+# Stablecoins Market Cap Data Pipeline
 
 A robust Python pipeline that fetches **daily** historical market capitalization data for major stablecoins from the CoinGecko API and stores it in a PostgreSQL database hosted on Supabase.
 
-**📅 Data Coverage**: Last 365 days (CoinGecko free tier limitation)
+**Data Coverage**: Last 365 days (CoinGecko free tier limitation)
 
-## 🚀 Features
+## Features
 
 - **Daily Data Collection**: Fetches the last 365 days of daily historical data for 6 major stablecoins
 - **Free Tier Optimized**: Works within CoinGecko's free tier limitations (365 days, 30 calls/minute)
@@ -138,12 +138,6 @@ CREATE TABLE stablecoin_market_caps (
 );
 ```
 
-### Indexes Created
-
-- `idx_coin_timestamp`: Composite index on (coin_id, timestamp_utc)
-- `idx_timestamp`: Index on timestamp_utc for time-series queries
-- `idx_coin_id`: Index on coin_id for filtering by coin
-
 ## 📈 Data Quality Features
 
 ### Price Validation
@@ -225,49 +219,127 @@ logging.basicConfig(
 
 ## 📊 Example Queries
 
-### Get Latest Market Caps
+### Get Market Cap per Week per Coin
+
+Here we use the rank function to remove possible duplicated days.
 
 ```sql
-SELECT
-    coin_symbol,
-    coin_name,
-    market_cap_usd,
-    price_usd,
-    timestamp_utc
-FROM stablecoin_market_caps
-WHERE timestamp_utc = (
-    SELECT MAX(timestamp_utc)
-    FROM stablecoin_market_caps s2
-    WHERE s2.coin_id = stablecoin_market_caps.coin_id
+WITH temp as (
+    select *
+    from stablecoin_market_caps
+    where timestamp_utc < (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps)
+    order by timestamp_utc desc
 )
-ORDER BY market_cap_usd DESC;
+select
+ coin_name,
+ coin_id,
+ date_trunc('week', timestamp_utc) as week,
+ sum(market_cap_usd) as market_cap
+from temp
+WHERE timestamp_utc = (
+    SELECT max(timestamp_utc)
+    FROM temp m2
+    WHERE m2.coin_id = temp.coin_id
+    AND date_trunc('week', m2.timestamp_utc) = date_trunc('week', temp.timestamp_utc)
+)
+group by 1,2,3
+order by 3 desc;
 ```
 
-### Market Cap Trends Over Time
+### Get Current Volume
 
 ```sql
-SELECT
-    coin_symbol,
-    DATE(timestamp_utc) as date,
-    AVG(market_cap_usd) as avg_market_cap,
-    AVG(price_usd) as avg_price
-FROM stablecoin_market_caps
-WHERE timestamp_utc >= NOW() - INTERVAL '1 year'
-GROUP BY coin_symbol, DATE(timestamp_utc)
-ORDER BY date DESC, avg_market_cap DESC;
+WITH temp as (
+    select *,
+    RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+    from stablecoin_market_caps
+    where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps)  = timestamp_utc::date
+)
+select sum(volume_24h_usd) as total_current_volume
+from temp
+where rank = 1;
 ```
 
-### Price Anomaly Detection
+### Get Volume Percentage Change
 
 ```sql
-SELECT
-    coin_symbol,
-    price_usd,
-    timestamp_utc,
-    market_cap_usd
-FROM stablecoin_market_caps
-WHERE price_usd < 0.95 OR price_usd > 1.05
-ORDER BY timestamp_utc DESC;
+WITH current_cap as (
+    WITH temp as (
+        select *,
+        RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+        from stablecoin_market_caps
+        where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps)  = timestamp_utc::date
+    )
+    select sum(volume_24h_usd) as current_total
+    from temp
+    where rank = 1
+),
+previous_cap as (
+    WITH temp as (
+        select *,
+        RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+        from stablecoin_market_caps
+        where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps) - interval '1 month'  = timestamp_utc::date
+    )
+    select sum(volume_24h_usd) as previous_total
+    from temp
+    where rank = 1
+)
+select
+    current_total,
+    previous_total,
+    ((current_total - previous_total) / previous_total * 100) as percentage_change
+from current_cap, previous_cap;
+```
+
+### Get Market Cap Percentage Change
+
+Here we use the rank function to remove possible duplicated days.
+
+```sql
+WITH current_cap as (
+    WITH temp as (
+        select *,
+        RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+        from stablecoin_market_caps
+        where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps)  = timestamp_utc::date
+    )
+    select sum(market_cap_usd) as current_total
+    from temp
+    where rank = 1
+),
+previous_cap as (
+    WITH temp as (
+        select *,
+        RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+        from stablecoin_market_caps
+        where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps) - interval '1 month'  = timestamp_utc::date
+    )
+    select sum(market_cap_usd) as previous_total
+    from temp
+    where rank = 1
+)
+select
+    current_total,
+    previous_total,
+    ((current_total - previous_total) / previous_total * 100) as percentage_change
+from current_cap, previous_cap;
+```
+
+### Get Current Market Cap
+
+Here we use the rank function to remove possible duplicated days.
+
+```sql
+WITH temp as (
+    select *,
+    RANK() OVER (partition by coin_id ORDER BY timestamp_utc) as rank
+    from stablecoin_market_caps
+    where (select date_trunc('day',max(timestamp_utc)) from stablecoin_market_caps)  = timestamp_utc::date
+)
+select sum(market_cap_usd) as total_current_market_cap
+from temp
+where rank = 1
 ```
 
 ## 🔄 Re-running the Pipeline
