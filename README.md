@@ -4,6 +4,8 @@ A robust Python pipeline that fetches **daily** historical market capitalization
 
 **Data Coverage**: Last 365 days (CoinGecko free tier limitation)
 
+You can find insights from these data in the live dashboard at [stablecoins.gabrielgarciasuarez.com](https://stablecoins.gabrielgarciasuarez.com/).
+
 ## Features
 
 - **Daily Data Collection**: Fetches the last 365 days of daily historical data for 6 major stablecoins
